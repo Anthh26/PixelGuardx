@@ -37,7 +37,7 @@ def hashline(path, algorithm):
 def main():
     packages = sorted(POOL.glob("*.deb"))
     if not packages:
-        sys.exit("No verified .deb found in pool/. Upload a release package first.")
+        print("No package yet; building an empty Sileo APT feed.")
     for deb in packages:
         if field(deb, "Package") != EXPECTED_ID:
             sys.exit(f"Unexpected package identifier: {deb.name}")
@@ -62,8 +62,8 @@ def main():
     for archive in (BASE / "source").glob("*.zip"):
         shutil.copy2(archive, SITE / "source" / archive.name)
 
-    packages_text = run("dpkg-scanpackages", "-m", "pool", "/dev/null")
-    if f"Package: {EXPECTED_ID}" not in packages_text:
+    packages_text = run("dpkg-scanpackages", "-m", "pool", "/dev/null") if packages else ""
+    if packages and f"Package: {EXPECTED_ID}" not in packages_text:
         sys.exit("Package metadata generation failed.")
     blob = packages_text.encode("utf-8")
     (SITE / "Packages").write_bytes(blob)
@@ -86,7 +86,7 @@ def main():
         ).rstrip("\n"))
     (SITE / "Release").write_text("\n".join(headers) + "\n", encoding="utf-8")
 
-    latest = html.escape(field(packages[-1], "Version"))
+    latest = html.escape(field(packages[-1], "Version")) if packages else "Not published yet"
     page = """<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>PixelGuardx</title><style>body{font:18px system-ui;background:#111827;color:#f3f4f6;max-width:680px;margin:8vh auto;padding:22px;line-height:1.5}a{color:#93c5fd}code{word-break:break-all}</style></head><body><h1>PixelGuardx</h1><p>Sileo APT source for experimental PixelGuard AI.</p><p>Latest version: <code>__VERSION__</code></p><p>Add this in Sileo → Sources → +</p><p><code>__URL__</code></p><p><a href="sileo://source/__URL__">Open in Sileo</a></p><p>Compiled packages and <a href="./source/">corresponding source archives</a> are hosted here. Sileo offers updates when refreshed; it does not silently install packages.</p><p>This tweak is not reliable across all applications, videos or image renderers. This repository is unsigned and should be treated as experimental.</p><p>Model attribution: <a href="https://github.com/notAI-tech/NudeNet">NudeNet (AGPL-3.0)</a>.</p></body></html>"""
     (SITE / "index.html").write_text(
         page.replace("__VERSION__", latest).replace("__URL__", URL), encoding="utf-8"
