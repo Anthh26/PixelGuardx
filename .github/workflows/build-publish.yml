@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
 concurrency:
   group: pixelguardx-release
-  cancel-in-progress: false
+  cancel-in-progress: true
 jobs:
   build:
     runs-on: macos-15
