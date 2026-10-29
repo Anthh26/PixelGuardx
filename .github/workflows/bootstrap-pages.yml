@@ -1,0 +1,35 @@
+name: Initialise PixelGuardx Sileo source
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/bootstrap-pages.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+jobs:
+  publish-base:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check GitHub Pages configuration
+        uses: actions/configure-pages@v5
+      - name: Install APT index tool
+        run: sudo apt-get update && sudo apt-get install -y dpkg-dev
+      - name: Build public APT metadata
+        run: |
+          python3 generate_repo.py
+          test -f site/Packages
+          test -s site/Packages.gz
+          test -s site/Release
+          echo 'Generated Sileo website without requiring macOS build queue'
+      - name: Upload source to Pages
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: site
+      - name: Deploy public Sileo website
+        uses: actions/deploy-pages@v4
