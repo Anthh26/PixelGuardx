@@ -1,0 +1,97 @@
+name: Build PixelGuard AI and publish Sileo updates
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'generate_repo.py'
+      - '.github/workflows/build-publish.yml'
+  workflow_dispatch:
+concurrency:
+  group: pixelguardx-release
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Snapshot corresponding release source
+        run: |
+          version="$(sed -n 's/^Version: //p' src/control | head -1)"
+          test -n "$version"
+          minor="${version%.*}"
+          cp -R src "PixelGuard-v${minor}"
+          zip -qr "PixelGuard-v${minor}-source.zip" "PixelGuard-v${minor}"
+          echo "SOURCE_ZIP=PixelGuard-v${minor}-source.zip" >> "$GITHUB_ENV"
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install Theos and build tools
+        run: |
+          brew install ldid dpkg xz make
+          git clone --depth=1 --recursive https://github.com/theos/theos.git "$RUNNER_TEMP/theos"
+          echo "THEOS=$RUNNER_TEMP/theos" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/theos/sdks"
+          sdk="$(xcrun --sdk iphoneos --show-sdk-path)"
+          ln -s "$sdk" "$RUNNER_TEMP/theos/sdks/$(basename "$sdk")"
+      - name: Test detector and source
+        working-directory: src
+        run: python3 test_detector.py && python3 check_source.py
+      - name: Install model export tools
+        run: python3 -m pip install 'ultralytics>=8.3.207,<9' 'coremltools>=8,<11'
+      - name: Download, verify, and compile NudeNet Core ML model
+        working-directory: src
+        run: bash ./prepare_model_macos.sh
+      - name: Compile and package rootless arm64e
+        working-directory: src
+        run: gmake clean package FINALPACKAGE=1
+      - name: Validate installable package layout
+        working-directory: src
+        run: python3 verify_macos_build.py
+      - name: Assemble release files
+        run: |
+          mkdir -p release-files
+          cp src/packages/*.deb release-files/
+          cp "$SOURCE_ZIP" release-files/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pixelguard-release-files
+          path: release-files/
+          if-no-files-found: error
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download compiled package and corresponding source
+        uses: actions/download-artifact@v4
+        with:
+          name: pixelguard-release-files
+          path: release-files/
+      - name: Generate Sileo APT repository
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y dpkg-dev
+          mkdir -p pool source
+          cp release-files/*.deb pool/
+          cp release-files/*-source.zip source/
+          python3 generate_repo.py
+          grep -q '^Package: com.anth.pixelguard$' site/Packages
+          grep -q '^Architecture: iphoneos-arm64$' site/Packages
+          test -s site/Release
+          test -s site/Packages.gz
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: site
+      - uses: actions/deploy-pages@v4
