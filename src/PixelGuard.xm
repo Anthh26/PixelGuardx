@@ -281,6 +281,24 @@ static void PGRetry(UIImageView *view, UIImage *source, NSObject *token, NSUInte
     });
 }
 %hook UIImageView
+// UIKit sometimes starts animations through animationImages, not image.
+// Replace raw frames with a covered placeholder until the shared image pipeline
+// has produced a fully censored animation.
+- (void)setAnimationImages:(NSArray<UIImage *> *)images {
+    if (objc_getAssociatedObject(self, &PGBypassKey) || !PGIsEnabled() || !images.count) {
+        %orig; return;
+    }
+    %orig(nil); // Original animation frames must never play during scanning.
+    if (images.count > 48) { self.image = PGPlaceholder(); return; }
+    NSTimeInterval duration = self.animationDuration;
+    if (duration <= 0) duration = (NSTimeInterval)images.count / 12.0;
+    UIImage *animated = [UIImage animatedImageWithImages:images duration:duration];
+    self.image = animated ?: PGPlaceholder();
+}
+- (void)startAnimating {
+    if (PGIsEnabled() && objc_getAssociatedObject(self, &PGTokenKey)) return;
+    %orig;
+}
 - (void)setImage:(UIImage *)image {
     if (objc_getAssociatedObject(self, &PGBypassKey)) { %orig; return; }
     // Invalidate any pending work when Photos reuses a view or sets a new image.
