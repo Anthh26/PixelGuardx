@@ -97,10 +97,10 @@ static double PGTensorRead(void *context, int channel, int proposal) {
 static BOOL PGEligibleFrame(UIImage *image) {
     if (!image || !image.CGImage) return NO;
     size_t width = CGImageGetWidth(image.CGImage), height = CGImageGetHeight(image.CGImage);
-    // Grid thumbnails are frequently smaller than 280 px; zoomed photos may exceed 3000 px.
-    // Cap pixel count to avoid allocating enormous full-resolution raster buffers in Photos.
-    return width >= 96 && height >= 96 && width <= 6000 && height <= 6000 &&
-           ((double)width * (double)height) <= 26000000.0;
+    // Small grid thumbnails and typical 48 MP images need to be eligible.
+    // Very large unsupported images remain covered by the fail-closed view hook.
+    return width >= 96 && height >= 96 && width <= 12000 && height <= 12000 &&
+           ((double)width * (double)height) <= 80000000.0;
 }
 // Short UIKit animated UIImage sequences are scanned before they can play.
 static BOOL PGEligibleImage(UIImage *image) {
@@ -167,10 +167,19 @@ static int PGAddNMSBoxes(NSArray<VNObservation *> *observations, PGBox *boxes) {
 }
 // Upright rasterization gives Vision and Core Image the same coordinate system.
 static UIImage *PGUprightImage(UIImage *image) {
-    if (!image || image.imageOrientation == UIImageOrientationUp) return image;
-    CGSize size = image.size;
-    if (size.width <= 0 || size.height <= 0) return nil;
-    UIGraphicsBeginImageContextWithOptions(size, NO, image.scale);
+    if (!image || !image.CGImage) return nil;
+    CGFloat pixelWidth = (CGFloat)CGImageGetWidth(image.CGImage);
+    CGFloat pixelHeight = (CGFloat)CGImageGetHeight(image.CGImage);
+    if (image.imageOrientation == UIImageOrientationUp &&
+        MAX(pixelWidth, pixelHeight) <= 2560.0) return image;
+    // Bound the processed render to around 2560 px on its longest edge.
+    // Otherwise a 48 MP zoom image allocates very large inference/compositing buffers.
+    CGFloat pointsScale = MAX(image.scale, 1.0);
+    CGFloat displayWidth = image.size.width * pointsScale;
+    CGFloat displayHeight = image.size.height * pointsScale;
+    CGFloat shrink = MIN(1.0, 2560.0 / MAX(displayWidth, displayHeight));
+    CGSize size = CGSizeMake(MAX(1, displayWidth*shrink), MAX(1, displayHeight*shrink));
+    UIGraphicsBeginImageContextWithOptions(size, NO, 1.0);
     [image drawInRect:CGRectMake(0, 0, size.width, size.height)];
     UIImage *upright = UIGraphicsGetImageFromCurrentImageContext();
     UIGraphicsEndImageContext();
