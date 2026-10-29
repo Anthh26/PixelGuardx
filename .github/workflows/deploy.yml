@@ -1,0 +1,30 @@
+name: Publish PixelGuardx APT
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'pool/**'
+      - 'source/**'
+      - 'generate_repo.py'
+      - '.github/workflows/deploy.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y dpkg-dev
+      - run: python3 generate_repo.py
+      - run: test -f site/Packages.gz && test -s site/Release
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: site
+      - uses: actions/deploy-pages@v4
