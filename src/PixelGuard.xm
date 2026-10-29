@@ -1,4 +1,4 @@
-// PixelGuard 0.7 — experimental, Photos-only. More fail-closed UIImageView handling.
+// PixelGuard 0.8 — experimental, Photos-only. Expand eligible image sizes and orientations.
 // On-device NudeNet via Vision/Core ML. This is not a guaranteed privacy barrier.
 #import <UIKit/UIKit.h>
 #import <Foundation/Foundation.h>
@@ -95,9 +95,12 @@ static double PGTensorRead(void *context, int channel, int proposal) {
     return 0;
 }
 static BOOL PGEligibleFrame(UIImage *image) {
-    if (!image || !image.CGImage || image.imageOrientation != UIImageOrientationUp) return NO;
+    if (!image || !image.CGImage) return NO;
     size_t width = CGImageGetWidth(image.CGImage), height = CGImageGetHeight(image.CGImage);
-    return width >= 280 && height >= 280 && width <= 3000 && height <= 3000;
+    // Grid thumbnails are frequently smaller than 280 px; zoomed photos may exceed 3000 px.
+    // Cap pixel count to avoid allocating enormous full-resolution raster buffers in Photos.
+    return width >= 96 && height >= 96 && width <= 6000 && height <= 6000 &&
+           ((double)width * (double)height) <= 26000000.0;
 }
 // Short UIKit animated UIImage sequences are scanned before they can play.
 static BOOL PGEligibleImage(UIImage *image) {
@@ -162,8 +165,21 @@ static int PGAddNMSBoxes(NSArray<VNObservation *> *observations, PGBox *boxes) {
     return pg_decode_nms(PGTensorRead, &c, PGTensorRead, &p, (int)p.channels,
                          (int)p.proposals, .55, boxes, PG_MAX_RESULTS);
 }
+// Upright rasterization gives Vision and Core Image the same coordinate system.
+static UIImage *PGUprightImage(UIImage *image) {
+    if (!image || image.imageOrientation == UIImageOrientationUp) return image;
+    CGSize size = image.size;
+    if (size.width <= 0 || size.height <= 0) return nil;
+    UIGraphicsBeginImageContextWithOptions(size, NO, image.scale);
+    [image drawInRect:CGRectMake(0, 0, size.width, size.height)];
+    UIImage *upright = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    return upright;
+}
 static UIImage *PGProcessFrame(UIImage *source) {
-    if (!PGEligibleImage(source) || !PGIsEnabled()) return nil;
+    if (!PGEligibleFrame(source) || !PGIsEnabled()) return nil;
+    source = PGUprightImage(source);
+    if (!source || !source.CGImage) return nil;
     VNCoreMLModel *model = PGVisionModel();
     if (!model) return nil;
     VNCoreMLRequest *request = [[VNCoreMLRequest alloc] initWithModel:model];
@@ -271,7 +287,14 @@ static void PGRetry(UIImageView *view, UIImage *source, NSObject *token, NSUInte
     objc_setAssociatedObject(self, &PGTokenKey, nil, OBJC_ASSOCIATION_ASSIGN);
     if (!PGIsEnabled()) { %orig; return; }
     if (image.images.count && !PGEligibleImage(image)) { %orig(PGPlaceholder()); return; }
-    if (!PGEligibleImage(image)) { %orig; return; }
+    if (!PGEligibleImage(image)) {
+        // A large unsupported/CI-backed photo must not silently bypass the filter.
+        // Small toolbar icons remain untouched.
+        if (image && image.size.width >= 96 && image.size.height >= 96) {
+            %orig(PGPlaceholder());
+        } else { %orig; }
+        return;
+    }
     if (!PGHasModel()) { %orig(PGPlaceholder()); return; }
     UIImage *alreadyCensored=objc_getAssociatedObject(image, &PGCachedKey);
     if (alreadyCensored) { %orig(alreadyCensored); return; }
