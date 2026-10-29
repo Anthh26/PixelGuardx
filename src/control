@@ -1,0 +1,9 @@
+Package: com.anth.pixelguard
+Name: PixelGuard AI (Photos, experimental)
+Version: 0.7.0
+Architecture: iphoneos-arm64
+Maintainer: PixelGuard Experiment
+Section: Tweaks
+Priority: optional
+Depends: firmware (>= 16.0)
+Description: Enabled-by-default, Photos-only NudeNet censoring for Dopamine rootless; Active after installation; create disabled sentinel to switch off. Requires bundled, validated Core ML model.
